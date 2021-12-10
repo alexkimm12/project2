@@ -1,0 +1,289 @@
+---
+title: 'Project 2: Data Mining, Classification, Prediction'
+author: "SDS322E"
+date: ''
+output:
+  html_document:
+    toc: yes
+    toc_float:
+      collapsed: no
+      smooth_scroll: yes
+  pdf_document:
+    toc: no
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = TRUE, fig.align = "center", warning = F, message = F,
+tidy=TRUE, tidy.opts=list(width.cutoff=60), R.options=list(max.print=100))
+
+class_diag <- function(score, truth, positive, cutoff=.5){
+
+  pred <- factor(score>cutoff,levels=c("TRUE","FALSE"))
+  truth <- factor(truth==positive, levels=c("TRUE","FALSE"))
+
+  tab<-table(truth, pred)
+  acc=sum(diag(tab))/sum(tab)
+  sens=tab[1,1]/rowSums(tab)[1]
+  spec=tab[2,2]/rowSums(tab)[2]
+  ppv=tab[1,1]/colSums(tab)[1]
+
+#CALCULATE F1
+  f1=2*(sens*ppv)/(sens+ppv)
+  
+#CALCULATE EXACT AUC
+  truth<-as.numeric(truth=="TRUE")
+  ord<-order(score, decreasing=TRUE)
+  score <- score[ord]; truth <- truth[ord]
+  TPR=cumsum(truth)/max(1,sum(truth))
+  FPR=cumsum(!truth)/max(1,sum(!truth))
+  dup<-c(score[-1]>=score[-length(score)], FALSE)
+  TPR<-c(0,TPR[!dup],1); FPR<-c(0,FPR[!dup],1)
+  n <- length(TPR)
+  auc<- sum( ((TPR[-1]+TPR[-n])/2) * (FPR[-1]-FPR[-n]) )
+  round(data.frame(acc,sens,spec,ppv,f1,ba=(sens+spec)/2,auc, row.names = "Metrics"),4)
+}
+```
+
+# Mining, Classification, Prediction
+
+## Alex Kim UTEid: ak37642
+
+### Introduction 
+
+I decided to go with data I found online from the list (https://vincentarelbundock.github.io/Rdatasets/datasets.html) provided on the project instructions. I decided to go for data that still went along with traffic fatalities, but I wanted to see other potential factors that were different from the health data I found in project part 1. With this, I wanted to explore the relationship between traffic fatalities and the various aspects of drunking driving for states within the United States from 1987 to 1988. As I've mentioned, I'm really big on looking at the news, so I wanted to continue to observe the possible associations of traffic fatality rates with the variables in this dataset even further. There are many different factors that tie into traffic fatalities, but it's interesting to see whether there are possible associations with things like unemployment rate, the tax on beers, policies of the state and more.
+
+Some of the variables in my dataset include the traffic fatality rate, year, state ID code, tax on cases of beer, whether there is a mandatory jail sentence, whether there is a mandatory community service, average miles per driver, the unemployment rate, and per capita personal income. I decided to change my binary variables to be a logical type so that it would be easier later on (TRUE/FALSE) instead of yes or no. There are 96 observations in total. Out of the 96 observations, 28 were found to include mandatory jail sentence while 68 do not include mandatory jail sentence. Furthermore out of the 96 observations, 20 require mandatory community serivce, while 76 do not.
+
+```{R}
+library(tidyverse)
+# read your datasets in here, e.g., with read_csv()
+library(readr)
+fatality <- read_csv("~/project2/Fatality 1.csv")
+
+#Renaming the columns
+fatality <- fatality %>% rename("FatalityRate"=mrall, "BeerTax"=beertax,"Jail"=`jaild`, "CommunityServ"=`comserd`, "MilesAvg"=`vmiles`, "Unemployment"=`unrate`, "PersonalIncome"=`perinc`)
+
+fatality <- fatality %>% mutate(Jail=ifelse(Jail=="yes","TRUE","FALSE"))
+
+fatality <- fatality %>% mutate(CommunityServ=ifelse(CommunityServ=="yes","TRUE","FALSE"))
+
+
+fatality %>% filter(Jail=="TRUE")
+fatality %>% filter(CommunityServ=="TRUE")
+```
+
+### Cluster Analysis
+
+```{R}
+library(cluster)
+# clustering code here
+fatality_dat <- fatality %>% select(FatalityRate, BeerTax, MilesAvg, Unemployment, PersonalIncome)
+
+sil_width<- vector()
+for (i in 2:10){
+ pam_fit<- pam(fatality_dat, k=i)
+ sil_width[i] <- pam_fit$silinfo$avg.width
+}
+ggplot()+geom_line(aes(x=1:10, y=sil_width))+scale_x_continuous(name="k", breaks=1:10)
+fatality_pam<- fatality_dat %>% pam(k=4)
+plot(fatality_pam, which=2)
+
+fatality %>% slice(fatality_pam$id.med)
+
+# Pairiwse combinations of the variables
+library(GGally)
+fatality_cluster <- fatality_dat %>% mutate(cluster=as.factor(fatality_pam$clustering))
+ggpairs(fatality_cluster, columns=1:5, aes(color=cluster))
+```
+
+Around k=4, the average silhouette width was around 0.61, which was the greatest out of all the other values of k up to 10. Just to note, k=5 and k=4 had the same silhouette width, but I went with k=4 for visualization and interpretation purposes. To get to this conclusion, I ran PAM clustering on the data from k=2 to k=10, and found that k=4 had the greatest average silhouette width, which was around 0.61. Since this value falls within the range of 0.51 to 0.70, this would be considered to be a reasonable structure. State IDs of 45, 13, 24, and 27 are the four states that are representatives of their clusters, or the medoids. They are most similar on MilesAvg and Unemployment. They are most different on FatalityRate, BeerTax, and PersonalIncome.
+
+Looking at the plot of every pairwise scatterplot, personal income seems to have the greatest difference between the four clusters. The miles per average and beer tax seem to have the least greatest difference between the five clusters. Cluster 3 (blue) seems to have the least fatality rate, beer tax, and unemployment rate. Cluster 3 (blue) also seems to have the highest personal income. Cluster 1 (orange) seems to have higher unemployment rates and fatality rates, with also a slightly higher average miles per driver. Cluster 1 (orange) also has lower personal income. Overall, all of the clusters seemed to have similar beer tax and average miles per driver (excluding cluster 1). The greatest correlation, excluding the signs, was 0.606 for personal income and fatality rate. The least correlation was miles per average and unemployment with a correlation value of 0.007. 
+    
+### Dimensionality Reduction with PCA
+
+```{R}
+# PCA code here
+fatality_sel <- fatality %>% select(c(4,5,8,9,10))
+pca_fatality <-princomp(fatality_sel, cor=TRUE)
+summary(pca_fatality)
+
+eigval_pca <- pca_fatality$sdev^2
+varprop = round(eigval_pca/sum(eigval_pca), 2)
+ggplot() + geom_bar(aes(y = varprop, x = 1:5), stat = "identity") + 
+    xlab("") + geom_path(aes(y = varprop, x = 1:5)) + 
+    geom_text(aes(x = 1:5, y = varprop, label = round(varprop, 
+        2)), vjust = 1, col = "white", size = 5) + 
+    scale_y_continuous(breaks = seq(0, 0.6, 0.2), labels = scales::percent) + 
+    scale_x_continuous(breaks = 1:10)
+round(cumsum(eigval_pca)/sum(eigval_pca), 3)
+summary(pca_fatality, loadings=T)
+pca_fatality$scores %>% cor %>% round(5)
+
+#Plotting PC scores with respect to the first 2 PCs colored by the Fatality Rate variable
+fatality %>% as.data.frame %>% mutate(PC1 = pca_fatality$scores[,1], PC2 = pca_fatality$scores[, 2]) %>% ggplot(aes(PC1, PC2, color=FatalityRate)) + geom_point()
+```
+
+The first 3 PCs explain 89% of the total variance. This was seen through the plot in which we were able to see that the first three PCs exceeded 85% of the total variance with the PCs explaining around 89% of the variance. The loadings for PC1 generally seem to mean that a higher score will score higher for all the other factors (fatality rate, beer tax, average miles driven, and unemployment (excluding personal income because it loads negatively)). A lower score on PC1 would mean lower scores for all the other factors (excluding personal income because it loads negatively). Higher scores on PC2 would mean higher scores on Fatality rate, Beer tax, average miles per driver, and personal income, but a worse score for unemployment rate. Conversely, a lower score in PC2 would mean lower scores on Fatality rate, Beer tax, average miles per driver, and personal income, but a higher score for unemployment rate. Lastly, higher scores on PC3 mean a higher score for fatality rate, average miles per driver, and personal income, but a lower value for beer tax. On the other hand, a lower score for PC3 would mean a lower score for fatality rate, average miles per driver, and personal income, but a higher value for beer tax.
+
+After, I piped the correlation matrix of all of my PC scores to show that my 5 PCs are uncorrelated with each other. The total variance in my dataset is explained by the first 3 PCs since they add up to around 89%. Furthermore, I ran a plot that specifically looked at PC1 and PC2 scores for all 96 observations and colored the points by the fatality rate variable. I found a correlation of 0.554 between the fatality rate and PC1. Looking at the plot, for individuals with a lower score for the fatality rate, they also tended to have lower scores for PC1. As PC1 increased, the fatality rate seemed to also increase.
+
+###  Linear Classifier
+
+```{R}
+# linear classifier code here
+fatality_logisticfit <- glm(Jail=="TRUE"~FatalityRate+BeerTax+MilesAvg+Unemployment+PersonalIncome, data=fatality, family="binomial")
+fatalityprob_reg <- predict(fatality_logisticfit, type="response")
+class_diag(fatalityprob_reg, truth=fatality$Jail, positive="TRUE")
+
+#Confusion Matrix
+table(truth=fatality$Jail=="TRUE", prediction=fatalityprob_reg >0.5) %>% addmargins()
+TNR=66/68
+TNR
+TPR=5/28
+TPR
+FNR=1-TPR
+FNR
+FPR=1-TNR
+FPR
+```
+
+This logistic regression predicted the binary variable of Jail to the rest of the numeric variables in the dataset. Per the model, the AUC value was 0.7227. With an AUC value falling in the range of 0.7 and 0.8, this AUC is considered to be fair. Not too great but not too bad.
+
+For the linear classification, I generated a confusion matrix. The proportion of actual negatives correctly classified was 0.9706, which is also considered to be the true negative rate (TNR) or the specificity. Next, the proportion of actual positives being correctly classified 0.17857. This is called the true positive rate (TPR) or the sensitivity. The proportion of those that were true were classified as false, which in this case was 0.82143. This is called the false negative rate, or FNR. The proportion of those that were false were classified as true is called the false positive rate. In this case, that was 0.02941. 
+
+```{R}
+# cross-validation of linear classifier here
+set.seed(350)
+k = 10
+
+data <- sample_frac(fatality) 
+folds <- rep(1:k, length.out = nrow(data))  
+
+diags <- NULL
+
+i = 1
+for (i in 1:k) {
+    train <- data[folds != i, ]
+    test <- data[folds == i, ]
+    truth <- test$Jail
+
+fit <- glm(Jail =="TRUE"~FatalityRate+BeerTax+MilesAvg+Unemployment+PersonalIncome, data = train, family = "binomial") 
+probs <- predict(fit, newdata = test, type = "response") 
+diags <- rbind(diags, class_diag(probs, truth, positive = "TRUE"))
+}
+
+summarize_all(diags, mean)
+```
+After performing a k-fold cross validation with this model, the auc came out to 0.56785. This would be an indication that overfitting could be occurring. Before performing a k-fold cross validation, the model gave us an AUC of 0.7227. Now after the 10-fold cross validation, the AUC decreased to 0.56785. Since the AUC value falls within the range of 0.5-0.6, it seems to be performing "badly"! Overall, there seems to be signs of overfitting with this model.
+
+### Non-Parametric Classifier
+
+```{R}
+library(caret)
+# non-parametric classifier code here
+knn_fit <- knn3(Jail == "TRUE" ~FatalityRate+BeerTax+MilesAvg+Unemployment+PersonalIncome, data = fatality)
+prob_knn <- predict(knn_fit, newdata = fatality)
+class_diag(prob_knn[, 2], truth = fatality$Jail, positive = "TRUE")
+
+#Confusion Matrix
+table(truth=fatality$Jail=="TRUE", prediction=prob_knn[,2]>0.5) %>% 
+addmargins()
+TNR=63/68
+TNR
+TPR=6/28
+TPR
+FNR=1-TPR
+FNR
+FPR=1-TNR
+FPR
+```
+Following what we did in the previous steps, this time we used k-nearest-neighbors to our binary variable of jail to our numeric variables. Per the model, the AUC value was 0.7442. With an AUC value falling in the range of 0.7-0.8, this AUC is considered to be fair. Again, it's not too bad, but it's also not too great. 
+
+For the non-parametric classification, I generated a confusion matrix. The proportion of actual negatives correctly classified was 0.9265, which is also considered to be the true negative rate (TNR) or the specificity. Next, the proportion of actual positives being correctly classified 0.2142857. This is called hte true positive rate (TPR) or the sensitivity. The proportion of those that were true were classified as false, which in this case was 0.7857143. This is called the false negative rate, or FNR. The proportion of those that were false were classified as true is called the false positive rate. In this case, that was 0.07353. 
+
+```{R}
+# cross-validation of np classifier here
+set.seed(350)
+k = 10
+
+data <- sample_frac(fatality)  
+folds <- rep(1:k, length.out = nrow(data))
+
+diags <- NULL
+
+i = 1
+for (i in 1:k) {
+    train <- data[folds != i, ]
+    test <- data[folds == i, ]
+    truth <- test$Jail
+    
+fit <- knn3(Jail~FatalityRate+BeerTax+MilesAvg+Unemployment+PersonalIncome, data = train)
+    
+probs <- predict(fit, newdata = test)[, 2]  
+diags <- rbind(diags, class_diag(probs, truth, positive = "TRUE"))
+}
+summarize_all(diags, mean)
+```
+
+After performing a k-fold cross validation with this model, the AUC came out to 0.52982. This would be an indication that overfitting could be occurring because our AUC value decrease with the model predicting new observations per CV AUC. Before performing a k-fold cross validation, the model gave us an AUC of 0.7442. Now after the k-fold cross validation, the AUC decreased to 0.52982. Since the AUC value falls within the range of 0.5-0.6, it seems to be performing "badly"! Overall, there seems to be signs of overfitting with this model. When comparing our nonparametric model with the linear model (0.56785) in their cross-validation performance, the nonparametric (0.52982) one seems to be performing slightly worse. However, they are both performing "badly". 
+
+### Regression/Numeric Prediction
+
+```{R}
+# regression model code here
+fit_reg<- lm(FatalityRate~., data=fatality)
+yhat_reg <- predict(fit_reg)
+mean((fatality$FatalityRate-yhat_reg)^2)
+```
+
+```{R}
+# cross-validation of regression model here
+set.seed(1250)
+k=5 
+
+data <- fatality[sample(nrow(fatality)),] 
+folds <-cut(seq(1:nrow(fatality)),breaks=k,labels=F) 
+diags <-NULL
+for(i in 1:k){
+  train <-data[folds!=i,]
+  test <-data[folds==i,]
+  fit <-lm(FatalityRate~.,data=train)
+  yhat <-predict(fit,newdata=test)
+  diags<-mean((test$FatalityRate-yhat)^2)
+}
+mean(diags)
+```
+
+After fitting a linear regression model to the dataset predicting the fatality rate to all other variables, the MSE turned out to be 0.10544. MSE is a measure of prediction error; therefore, we'd want to see a smaller number. I performed k-fold CV on this model and found a MSE value of 0.12103. Since this MSE is a bit higher in CV, this could mean that some overfitting is occurring. 
+
+### Python 
+
+```{R}
+library(reticulate)
+use_python("/usr/bin/python3")
+```
+
+```{python}
+# python code here
+fatalitypyt = r.fatality
+fatalitypyt.head()
+type(fatalitypyt)
+fatalitypyt["MilesAvg"].mean()
+fatalitypyt["MilesAvg"].head()
+fatalitypyt["Unemployment"].std()
+```
+```{R}
+head(py$fatalitypyt)
+head(py$fatalitypyt["MilesAvg"])
+```
+In order to be able to share objects between R and python, you must be able to first run reticulate. After running reticulate, we can start working in the python chunk of code. First. you have to use r. to indicate that the dataset is from R itself. With this, I made it equal to fatalitypyt so that I can differentiate it when I go back to the R section. Now, we can take a look using head to see if our data transferred over as expected, which it did. Then I saw that it was a pandas dataframe. This dataset contained numeric variables as well as two binary variables and then three categorical ones. I found that the average miles per driver out of all 96 observations was around 8.4531. Furthermore, I found that the standard deviation of the unemployment rate across all 96 observations.
+
+Being able to switch between R and python is intersting because python code chunks will be able to talk to R code chunks. In the last step, I showed that I knew how to also incorporate my python dataset to R using py$fatalitypyt. This showed that I was also able to communicate from python to R. 
+
+### Concluding Remarks
+
+I wanted to still go towards traffic laws and fatalities, but it was really interesting to investigate this new dataset even further. I feel like this project really tested all of the things we learned this second half of the semester. It was definitely pretty challenging to try to figure out where I went wrong sometimes with my code; however, I really enjoyed it! I feel like I really got a lot out of this class and it was very rewarding. 
+
+
+
