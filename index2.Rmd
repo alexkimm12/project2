@@ -62,12 +62,8 @@ fatality <- read_csv("~/project2/Fatality 1.csv")
 
 #Renaming the columns
 fatality <- fatality %>% rename("FatalityRate"=mrall, "BeerTax"=beertax,"Jail"=`jaild`, "CommunityServ"=`comserd`, "MilesAvg"=`vmiles`, "Unemployment"=`unrate`, "PersonalIncome"=`perinc`)
-
 fatality <- fatality %>% mutate(Jail=ifelse(Jail=="yes","TRUE","FALSE"))
-
 fatality <- fatality %>% mutate(CommunityServ=ifelse(CommunityServ=="yes","TRUE","FALSE"))
-
-
 fatality %>% filter(Jail=="TRUE")
 fatality %>% filter(CommunityServ=="TRUE")
 ```

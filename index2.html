@@ -1548,14 +1548,10 @@ fatality &lt;- read_csv(&quot;~/project2/Fatality 1.csv&quot;)
 fatality &lt;- fatality %&gt;% rename(FatalityRate = mrall, BeerTax = beertax, 
     Jail = jaild, CommunityServ = comserd, MilesAvg = vmiles, 
     Unemployment = unrate, PersonalIncome = perinc)
-
 fatality &lt;- fatality %&gt;% mutate(Jail = ifelse(Jail == &quot;yes&quot;, 
     &quot;TRUE&quot;, &quot;FALSE&quot;))
-
 fatality &lt;- fatality %&gt;% mutate(CommunityServ = ifelse(CommunityServ == 
     &quot;yes&quot;, &quot;TRUE&quot;, &quot;FALSE&quot;))
-
-
 fatality %&gt;% filter(Jail == &quot;TRUE&quot;)</code></pre>
 <pre><code>## # A tibble: 28 x 10
 ##       X1 state  year FatalityRate BeerTax Jail  CommunityServ MilesAvg
